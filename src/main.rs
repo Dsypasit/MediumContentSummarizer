@@ -1,8 +1,13 @@
-use std::{borrow::Cow, str::FromStr};
+use std::{
+    borrow::Cow,
+    env::{self, VarError},
+    str::FromStr,
+};
 
 use regex::Regex;
-use reqwest::header::{self, HeaderValue, InvalidHeaderValue};
-use serde::de::Error;
+use reqwest::header::{self, HeaderMap, HeaderValue, InvalidHeaderValue};
+use serde::{de::Error, Deserialize, Serialize};
+use serde_json::{json, Value};
 use thiserror::Error;
 
 #[derive(Debug)]
@@ -97,19 +102,133 @@ impl<'a> MediumClient<'a> {
         for (_, [out]) in re.captures_iter(&data.body).map(|c| c.extract()) {
             m.push(out);
         }
-        println!("{:?}", m);
-        Ok("wow".to_owned())
+        let result = m.join(" ");
+        Ok(result)
+    }
+}
+
+#[derive(Debug, Error)]
+enum AISummaryError {
+    #[error("failed to fetch summary from agent")]
+    FetchFailed(ClientError),
+
+    #[error("No api key")]
+    NoAPIKey(VarError),
+
+    #[error("No api url")]
+    NoAPIURL(VarError),
+}
+
+trait AISummary<T> {
+    async fn fetch(&self, content: String) -> Result<T, AISummaryError>;
+    fn build_body(&self, content: String) -> serde_json::Value;
+}
+
+#[derive(Debug)]
+struct Claude3agent {
+    apikey: String,
+    url: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct Claude3resposeContent {
+    text: String,
+}
+#[derive(Debug, Serialize, Deserialize)]
+struct Claude3respose {
+    content: Vec<Claude3resposeContent>,
+    id: String,
+    model: String,
+}
+
+impl AISummary<Claude3respose> for Claude3agent {
+    async fn fetch(&self, content: String) -> Result<Claude3respose, AISummaryError> {
+        let mut headers = header::HeaderMap::new();
+        headers.insert(
+            "x-api-key",
+            header::HeaderValue::from_str(&self.apikey.clone())
+                .map_err(|err| AISummaryError::FetchFailed(ClientError::InsertHeaderFailed(err)))?,
+        );
+
+        headers.insert(
+            "anthropic-version",
+            header::HeaderValue::from_str("2023-06-01")
+                .map_err(|err| AISummaryError::FetchFailed(ClientError::InsertHeaderFailed(err)))?,
+        );
+
+        headers.insert(
+            header::CONTENT_TYPE,
+            header::HeaderValue::from_str("application/json")
+                .map_err(|err| AISummaryError::FetchFailed(ClientError::InsertHeaderFailed(err)))?,
+        );
+
+        let client = reqwest::ClientBuilder::new()
+            .default_headers(headers)
+            .build()
+            .map_err(|err| AISummaryError::FetchFailed(ClientError::FetchFailed(err)))?;
+
+        let body = self.build_body(content);
+
+        let res = client
+            .post(&self.url)
+            .body(body.to_string())
+            .send()
+            .await
+            .map_err(|err| AISummaryError::FetchFailed(ClientError::FetchFailed(err)))
+            .unwrap();
+
+        let result = res
+            .json::<Claude3respose>()
+            .await
+            .map_err(|err| AISummaryError::FetchFailed(ClientError::ParseError(err)))?;
+        Ok(result)
+    }
+
+    fn build_body(&self, content: String) -> serde_json::Value {
+        let data = json!(
+        {
+        "model": "claude-3-haiku-20240307",
+        "system": "can you summarize this with bullet point",
+        "max_tokens": 1024,
+        "messages": [
+        {
+        "role":"user",
+        "content": content
+        }
+        ]
+        }
+        );
+        return data;
+    }
+}
+
+impl Claude3agent {
+    fn new() -> Result<Self, AISummaryError> {
+        let apikey = env::var("CLAUDE_API")
+            .map_err(AISummaryError::NoAPIKey)
+            .unwrap();
+        let url = env::var("CLAUDE_URL")
+            .map_err(AISummaryError::NoAPIURL)
+            .unwrap();
+        Ok(Self { apikey, url })
     }
 }
 
 #[tokio::main]
 async fn main() {
-    let cookie = r#"uid=1f4ef4ec3d88; sid=1:l17QxZDJ+77kzz9TCbsyWzGhy9sQLuCYulwUNpS8YZWA7R90lZDHutwneJSMz+Tg;"#;
+    let cookie = r#""#;
     let client = MediumClient::new(cookie).unwrap();
-    let url = "https://medium.com/towards-data-science/fine-tune-llama-3-with-orpo-56cfab2f9ada";
+    let url = "https://medium.com/odds-team/unit-tests-%E0%B8%84%E0%B8%B7%E0%B8%AD-executable-document-7fe9e55da4e1";
     let output = client.fetch(url).await.unwrap();
     //
     // println!("{:#?}", output);
 
-    MediumClient::get_content(output).await.unwrap();
+    let medium_content = MediumClient::get_content(output).await.unwrap();
+    println!("size: {}", medium_content.len());
+    println!("{}", medium_content);
+
+    let claude_agent = Claude3agent::new().unwrap();
+    println!("{:?}", claude_agent);
+    let summarize = claude_agent.fetch(medium_content).await.unwrap();
+    println!("{:#?}", summarize);
 }
