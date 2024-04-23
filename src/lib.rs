@@ -11,7 +11,7 @@ use serde_json::{json, Value};
 use thiserror::Error;
 
 #[derive(Debug)]
-struct Data {
+pub struct Data {
     url: String,
     body: String,
     status: String,
@@ -24,13 +24,13 @@ impl Data {
 }
 
 #[derive(Debug)]
-struct MediumClient<'a> {
-    client: reqwest::Client,
+pub struct MediumClient<'a> {
+    pub client: reqwest::Client,
     cookie: Cow<'a, str>,
 }
 
 #[derive(Debug, Error)]
-enum ClientError {
+pub enum ClientError {
     #[error("failed to fecth url")]
     FetchFailed(reqwest::Error),
 
@@ -51,7 +51,7 @@ enum ClientError {
 }
 
 impl<'a> MediumClient<'a> {
-    fn new(cookie: &'a str) -> Result<Self, ClientError> {
+    pub fn new(cookie: &'a str) -> Result<Self, ClientError> {
         let mut headers = header::HeaderMap::new();
         headers.insert(
             header::COOKIE,
@@ -78,7 +78,7 @@ impl<'a> MediumClient<'a> {
         })
     }
 
-    async fn fetch(&self, url: &str) -> Result<Data, ClientError> {
+    pub async fn fetch(&self, url: &str) -> Result<Data, ClientError> {
         let res = self
             .client
             .get(url)
@@ -95,7 +95,7 @@ impl<'a> MediumClient<'a> {
         Ok(result)
     }
 
-    async fn get_content(data: Data) -> Result<String, ClientError> {
+    pub async fn get_content(data: Data) -> Result<String, ClientError> {
         let text = r#"text":\s*"((?:[^"\\]|\\.)*)"#;
         let re = Regex::new(text).map_err(ClientError::RegexError).unwrap();
         let mut m = vec![];
@@ -108,7 +108,7 @@ impl<'a> MediumClient<'a> {
 }
 
 #[derive(Debug, Error)]
-enum AISummaryError {
+pub enum AISummaryError {
     #[error("failed to fetch summary from agent")]
     FetchFailed(ClientError),
 
@@ -119,23 +119,23 @@ enum AISummaryError {
     NoAPIURL(VarError),
 }
 
-trait AISummary<T> {
+pub trait AISummary<T> {
     async fn fetch(&self, content: String) -> Result<T, AISummaryError>;
     fn build_body(&self, content: String) -> serde_json::Value;
 }
 
 #[derive(Debug)]
-struct Claude3agent {
+pub struct Claude3agent {
     apikey: String,
     url: String,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-struct Claude3resposeContent {
+pub struct Claude3resposeContent {
     text: String,
 }
 #[derive(Debug, Serialize, Deserialize)]
-struct Claude3respose {
+pub struct Claude3respose {
     content: Vec<Claude3resposeContent>,
     id: String,
     model: String,
@@ -188,7 +188,7 @@ impl AISummary<Claude3respose> for Claude3agent {
         let data = json!(
         {
         "model": "claude-3-haiku-20240307",
-        "system": "can you summarize this with bullet point",
+        "system": "can you summarize this as bullet point with english lang",
         "max_tokens": 1024,
         "messages": [
         {
@@ -203,7 +203,7 @@ impl AISummary<Claude3respose> for Claude3agent {
 }
 
 impl Claude3agent {
-    fn new() -> Result<Self, AISummaryError> {
+    pub fn new() -> Result<Self, AISummaryError> {
         let apikey = env::var("CLAUDE_API")
             .map_err(AISummaryError::NoAPIKey)
             .unwrap();
@@ -214,21 +214,10 @@ impl Claude3agent {
     }
 }
 
-#[tokio::main]
-async fn main() {
-    let cookie = r#""#;
-    let client = MediumClient::new(cookie).unwrap();
-    let url = "https://medium.com/odds-team/unit-tests-%E0%B8%84%E0%B8%B7%E0%B8%AD-executable-document-7fe9e55da4e1";
-    let output = client.fetch(url).await.unwrap();
-    //
-    // println!("{:#?}", output);
+struct OllamaAgent {}
 
-    let medium_content = MediumClient::get_content(output).await.unwrap();
-    println!("size: {}", medium_content.len());
-    println!("{}", medium_content);
-
-    let claude_agent = Claude3agent::new().unwrap();
-    println!("{:?}", claude_agent);
-    let summarize = claude_agent.fetch(medium_content).await.unwrap();
-    println!("{:#?}", summarize);
+impl OllamaAgent {
+    fn new() -> Self {
+        Self {}
+    }
 }
